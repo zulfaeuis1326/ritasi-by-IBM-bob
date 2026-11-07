@@ -1,0 +1,173 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  PENGAWAS
+}
+
+enum Shift {
+  PAGI   // 07:00 – 15:00
+  SIANG  // 15:00 – 23:00
+  MALAM  // 23:00 – 07:00
+}
+
+enum Material {
+  OB
+  COAL
+  SOIL
+  SOLU
+  MUD
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+}
+
+// ─── Master Data ─────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(PENGAWAS)
+  isActive     Boolean  @default(true)
+  pitId        String?  // pengawas hanya untuk 1 PIT (opsional, null = all)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  pit          Pit?         @relation(fields: [pitId], references: [id])
+  ritasis      Ritasi[]
+  auditLogs    AuditLog[]
+  sessions     Session[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Pit {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  code        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fleets      Fleet[]
+  ritasis     Ritasi[]
+  users       User[]
+
+  @@map("pits")
+}
+
+model Fleet {
+  id          String   @id @default(cuid())
+  name        String
+  code        String
+  pitId       String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  pit         Pit      @relation(fields: [pitId], references: [id], onDelete: Cascade)
+  haulers     Hauler[]
+  ritasis     Ritasi[]
+
+  @@unique([pitId, code])
+  @@map("fleets")
+}
+
+model Hauler {
+  id          String   @id @default(cuid())
+  unitNumber  String   @unique
+  type        String   // e.g. "CAT 777", "Komatsu HD785"
+  capacity    Float?   // ton
+  fleetId     String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fleet       Fleet    @relation(fields: [fleetId], references: [id], onDelete: Cascade)
+  ritasis     Ritasi[]
+
+  @@map("haulers")
+}
+
+// ─── Operational Data ────────────────────────────────────────────────────────
+
+model Ritasi {
+  id           String    @id @default(cuid())
+  haulerId     String
+  fleetId      String
+  pitId        String
+  userId       String    // pengawas yang mencatat
+  date         DateTime  @db.Date
+  shift        Shift
+  material     Material
+  trips        Int       @default(0)
+  ritasiTime   DateTime? // jam ritasi manual
+  keterangan   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  hauler       Hauler    @relation(fields: [haulerId], references: [id])
+  fleet        Fleet     @relation(fields: [fleetId], references: [id])
+  pit          Pit       @relation(fields: [pitId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
+
+  // Unique: satu hauler, satu material per shift per hari (satu record kumulatif)
+  @@unique([haulerId, material, date, shift])
+  @@index([pitId, date, shift])
+  @@index([fleetId, date])
+  @@index([userId, date])
+  @@map("ritasis")
+}
+
+// ─── Audit Log ───────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  userId     String
+  action     AuditAction
+  entity     String      // e.g. "Ritasi", "Hauler", "User"
+  entityId   String?
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+
+  user       User        @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
